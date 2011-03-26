@@ -144,7 +144,7 @@ DWORD WINAPI draad(LPVOID data)
 	fh = CreateFile(filename, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (fh == INVALID_HANDLE_VALUE)
 	{
-		fprintf(stderr, "Error opening file %s: %d\n", filename, GetLastError());
+		fprintf(stderr, "Error opening file %s: %ld\n", filename, GetLastError());
 		goto error;
 	}
 
@@ -163,7 +163,7 @@ DWORD WINAPI draad(LPVOID data)
 		}
 		if (DeviceIoControl(fh, IOCTL_DISK_GET_DRIVE_LAYOUT, NULL, 0, (void *)dli, 4096, &dummy2, NULL) == FALSE)
 		{
-			fprintf(stderr, "Cannot obtain drive layout: %d\n", GetLastError());
+			fprintf(stderr, "Cannot obtain drive layout: %ld\n", GetLastError());
 			goto error;
 		}
 
@@ -280,7 +280,7 @@ DWORD WINAPI draad(LPVOID data)
 		// seek to 'from'
 		if (SetFilePointer(fh, cur_offset.LowPart, &cur_offset.HighPart, FILE_BEGIN) == 0xFFFFFFFF)
 		{
-			fprintf(stderr, "Error seeking in file %s to position %d,%d (%x%x): %d\n", filename,
+			fprintf(stderr, "Error seeking in file %s to position %ld,%ld (%lx%lx): %ld\n", filename,
 				cur_offset.HighPart, cur_offset.LowPart, cur_offset.HighPart, cur_offset.LowPart, GetLastError());
 			err = error_mapper(GetLastError());
 		}
@@ -307,20 +307,20 @@ DWORD WINAPI draad(LPVOID data)
 				DWORD dummy;
 				UCHAR buffer[32768];
 				// read from socket
-				int nb = recv(sockh, (char *)buffer, min(len, 32768), 0);
+				DWORD nb = recv(sockh, (char *)buffer, min(len, 32768), 0);
 				if (nb == 0)
 					break;
 
 				// write to file;
 				if (WriteFile(fh, buffer, nb, &dummy, NULL) == 0)
 				{
-					fprintf(stderr, "Failed to write to %s: %d\n", filename, GetLastError());
+					fprintf(stderr, "Failed to write to %s: %ld\n", filename, GetLastError());
 					err = error_mapper(GetLastError());
 					break;
 				}
 				if (dummy != nb)
 				{
-					fprintf(stderr, "Failed to write to %s: %d (written: %d, requested to write: %d)\n", filename, GetLastError(), dummy, nb);
+					fprintf(stderr, "Failed to write to %s: %ld (written: %ld, requested to write: %ld)\n", filename, GetLastError(), dummy, nb);
 					break;
 				}
 
@@ -357,17 +357,16 @@ DWORD WINAPI draad(LPVOID data)
 				DWORD dummy;
 				UCHAR buffer[32768];
 				int nb = min(len, 32768);
-				int pnt = 0;
 
 				// read nb to buffer;
 				if (ReadFile(fh, buffer, nb, &dummy, NULL) == 0)
 				{
-					fprintf(stderr, "Failed to read from %s: %d\n", filename, GetLastError());
+					fprintf(stderr, "Failed to read from %s: %ld\n", filename, GetLastError());
 					break;
 				}
-				if (dummy != nb)
+				if (dummy != (DWORD)nb)
 				{
-					fprintf(stderr, "Failed to read from %s: %d\n", filename, GetLastError());
+					fprintf(stderr, "Failed to read from %s: %ld\n", filename, GetLastError());
 					break;
 				}
 
@@ -385,7 +384,7 @@ DWORD WINAPI draad(LPVOID data)
 		}
 		else
 		{
-			printf("Unexpected commandtype: %d\n", type);
+			printf("Unexpected commandtype: %ld\n", type);
 			break;
 		}
 	}
@@ -394,7 +393,7 @@ DWORD WINAPI draad(LPVOID data)
 error:
 	if (fh != NULL && CloseHandle(fh) == 0)
 	{
-		fprintf(stderr, "Failed to close handle: %d\n", GetLastError());
+		fprintf(stderr, "Failed to close handle: %ld\n", GetLastError());
 	}
 
 	closesocket(sockh);
@@ -461,6 +460,7 @@ int main(int argc, char *argv[])
 
 			DWORD tid;
 			HANDLE th = CreateThread(NULL, 0, draad, (void *)clienth, 0, &tid);
+			(void)th;
 		}
 	}
 
