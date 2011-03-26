@@ -343,7 +343,8 @@ int main(int argc, char *argv[])
 	SOCKET newconnh;
 	WSADATA WSAData;
 
-	printf("nbdsrvr v0.2, (C) 2003 by folkert@vanheusden.com\n");
+	printf("memnbd (in-memory NBD server) based on nbdsrvr v0.2, (C) 2003 by folkert@vanheusden.com\n");
+	printf("Designed to \"connect\" Windows box's memory to Linux hosts. (Coded by _Vi)\n");
 
 	if (argc != 3 && argc != 4)
 	{
