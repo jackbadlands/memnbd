@@ -4,8 +4,7 @@
 #include <stdio.h>
 
 int portnr;
-char *filename;
-int part_nr = 0;
+unsigned long long size_bytes;
 
 int error_mapper(DWORD winerr)
 {
@@ -136,55 +135,18 @@ BOOL putu32(SOCKET sh, ULONG value)
 DWORD WINAPI draad(LPVOID data)
 {
 	SOCKET sockh = (SOCKET)data;
-	HANDLE fh;
 	LARGE_INTEGER offset, fsize;
 
-	// open file 'filename'
-//	fh = CreateFile(filename, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-	fh = CreateFile(filename, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (fh == INVALID_HANDLE_VALUE)
-	{
-		fprintf(stderr, "Error opening file %s: %ld\n", filename, GetLastError());
-		goto error;
-	}
-
 	// find length of file or starting offset of partition
-	memset(&offset, 0x00, sizeof(offset));
-	memset(&fsize, 0x00, sizeof(fsize));
-	if (strnicmp(filename, "\\\\.\\PHYSICALDRIVE", 17) == 0)	/* disk */
-	{
-		DWORD dummy2;
-		char *dummy = (char *)malloc(4096);
-		DRIVE_LAYOUT_INFORMATION *dli = (DRIVE_LAYOUT_INFORMATION *)dummy;
-		if (!dummy)
-		{
-			fprintf(stderr, "Out of memory!\n");
-			goto error;
-		}
-		if (DeviceIoControl(fh, IOCTL_DISK_GET_DRIVE_LAYOUT, NULL, 0, (void *)dli, 4096, &dummy2, NULL) == FALSE)
-		{
-			fprintf(stderr, "Cannot obtain drive layout: %ld\n", GetLastError());
-			goto error;
-		}
+	offset.QuadPart = 0LL;
+	fsize.QuadPart = size_bytes;
 
-		// find starting offset of partition
-		offset = (dli -> PartitionEntry[part_nr]).StartingOffset;
-		fsize  = (dli -> PartitionEntry[part_nr]).PartitionLength;
-
-#ifdef _DEBUG
-		printf("Partition %d is of type %02x\n", part_nr, (dli -> PartitionEntry[part_nr]).PartitionType);
-		printf("Offset: %ld,%ld (%lx%lx)\n", offset.HighPart, offset.LowPart, offset.HighPart, offset.LowPart);
-		printf("Length: %ld,%ld (%lx%lx)\n", fsize.HighPart, fsize.LowPart, fsize.HighPart, fsize.LowPart);
-#endif
-	}
-	else													/* file */
+	char* mem_data = (char*)malloc(size_bytes);
+	
+	if (!mem_data)
 	{
-		fsize.LowPart = GetFileSize(fh, (DWORD *)&fsize.HighPart);
-		if (fsize.LowPart == 0xFFFFFFFF)
-		{
-			fprintf(stderr, "Failed to obtain filesize info!\n");
-			goto error;
-		}
+		fprintf(stderr, "Error malloc %lld bytes\n", size_bytes);
+		goto error;
 	}
 
 	/* negotiate */
@@ -239,7 +201,7 @@ DWORD WINAPI draad(LPVOID data)
 	printf("Started!\n");
 
 	/* main loop */
-	for(;fh != INVALID_HANDLE_VALUE;)
+	for(;;)
 	{
 		UCHAR handle[9];
 		ULONG magic, len, type;
@@ -277,16 +239,8 @@ DWORD WINAPI draad(LPVOID data)
 		// calculate current offset
 		cur_offset = add_li(offset, from);
 
-		// seek to 'from'
-		if (SetFilePointer(fh, cur_offset.LowPart, &cur_offset.HighPart, FILE_BEGIN) == 0xFFFFFFFF)
-		{
-			fprintf(stderr, "Error seeking in file %s to position %ld,%ld (%lx%lx): %ld\n", filename,
-				cur_offset.HighPart, cur_offset.LowPart, cur_offset.HighPart, cur_offset.LowPart, GetLastError());
-			err = error_mapper(GetLastError());
-		}
-
 		// error while seeking?
-		if (err != 0)
+		if (cur_offset.QuadPart < 0 || cur_offset.QuadPart > (signed long long)size_bytes)
 		{
 #ifdef _DEBUG
 			printf("Sending errno=%d\n", err);
@@ -302,9 +256,13 @@ DWORD WINAPI draad(LPVOID data)
 		}
 		else if (type == 1)	// write
 		{
+			if (cur_offset.QuadPart + len >= (signed long long int)size_bytes)
+			{
+				err = error_mapper(5);
+				break;
+			}
 			while(len > 0)
 			{
-				DWORD dummy;
 				UCHAR buffer[32768];
 				// read from socket
 				DWORD nb = recv(sockh, (char *)buffer, min(len, 32768), 0);
@@ -312,17 +270,8 @@ DWORD WINAPI draad(LPVOID data)
 					break;
 
 				// write to file;
-				if (WriteFile(fh, buffer, nb, &dummy, NULL) == 0)
-				{
-					fprintf(stderr, "Failed to write to %s: %ld\n", filename, GetLastError());
-					err = error_mapper(GetLastError());
-					break;
-				}
-				if (dummy != nb)
-				{
-					fprintf(stderr, "Failed to write to %s: %ld (written: %ld, requested to write: %ld)\n", filename, GetLastError(), dummy, nb);
-					break;
-				}
+				memcpy(mem_data+cur_offset.QuadPart, buffer, nb);
+				cur_offset.QuadPart += nb;
 
 				len -= nb;
 			}
@@ -354,21 +303,12 @@ DWORD WINAPI draad(LPVOID data)
 
 			while(len > 0)
 			{
-				DWORD dummy;
 				UCHAR buffer[32768];
 				int nb = min(len, 32768);
 
 				// read nb to buffer;
-				if (ReadFile(fh, buffer, nb, &dummy, NULL) == 0)
-				{
-					fprintf(stderr, "Failed to read from %s: %ld\n", filename, GetLastError());
-					break;
-				}
-				if (dummy != (DWORD)nb)
-				{
-					fprintf(stderr, "Failed to read from %s: %ld\n", filename, GetLastError());
-					break;
-				}
+				memcpy(buffer, mem_data+cur_offset.QuadPart, nb);
+				cur_offset.QuadPart += nb;
 
 				// send through socket
 				if (WRITE(sockh, buffer, nb) != nb) // connection was closed
@@ -391,11 +331,6 @@ DWORD WINAPI draad(LPVOID data)
 
 	// close file
 error:
-	if (fh != NULL && CloseHandle(fh) == 0)
-	{
-		fprintf(stderr, "Failed to close handle: %ld\n", GetLastError());
-	}
-
 	closesocket(sockh);
 
 	ExitThread(0);
@@ -412,13 +347,11 @@ int main(int argc, char *argv[])
 
 	if (argc != 3 && argc != 4)
 	{
-		fprintf(stderr, "Usage: %s file portnr [partitionnumber]\n", argv[0]);
+		fprintf(stderr, "Usage: %s size_in_bytes portnr\n", argv[0]);
 		return 1;
 	}
-	filename = argv[1];
+	size_bytes = atoll(argv[1]);
 	portnr = atoi(argv[2]);
-	if (argc == 4)
-		part_nr = atoi(argv[3]);
 
 	// initialize WinSock library
 	(void)WSAStartup(0x101, &WSAData); 
