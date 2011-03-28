@@ -331,6 +331,7 @@ DWORD WINAPI draad(LPVOID data)
 
 	// close file
 error:
+	free(mem_data);
 	closesocket(sockh);
 
 	ExitThread(0);
